@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# port-killer installer — CLI + Waybar
+#   ./install
+#   ./install --waybar     also configure Waybar
+#   ./install --deps       install Ubuntu apt packages first
+#   ./install --help
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_ROOT="${INSTALL_ROOT:-$HOME/.local}"
+BIN_DIR="$INSTALL_ROOT/bin"
+SETUP_GNOME=0
+SETUP_WAYBAR=0
+SETUP_DESKTOP=0
+INSTALL_DEPS=0
+
+usage() {
+  cat <<EOF
+port-killer installer
+
+Usage:
+  ./install              Install CLI to $BIN_DIR
+  ./install --gnome        Install GNOME top bar extension (Ubuntu default)
+  ./install --waybar       Install Waybar module (Hyprland/Sway)
+  ./install --desktop      Auto-detect GNOME or Waybar
+  ./install --deps         Ubuntu: apt install build deps first (24.04 / 26.04)
+  ./install --help         Show this help
+
+After install, ensure $BIN_DIR is on your PATH:
+  export PATH="$BIN_DIR:\$PATH"
+
+Then:
+  port-killer status       List dev servers
+  port-killer menu         Kill via rofi/wofi
+  port-killer setup waybar --install   Configure Waybar later
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --waybar) SETUP_WAYBAR=1 ;;
+    --gnome) SETUP_GNOME=1 ;;
+    --desktop) SETUP_DESKTOP=1 ;;
+    --deps) INSTALL_DEPS=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $arg" >&2; usage >&2; exit 1 ;;
+  esac
+done
+
+info() { printf '==> %s\n' "$*"; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+ensure_rust() {
+  if command -v cargo >/dev/null 2>&1; then
+    return 0
+  fi
+  die "Rust not found. Install: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+}
+
+ensure_linker() {
+  if command -v cc >/dev/null 2>&1; then
+    return 0
+  fi
+  cat >&2 <<EOF
+error: C linker (cc) not found.
+
+Ubuntu 24.04 / 26.04:
+  ./scripts/install-ubuntu-deps.sh
+  # or: sudo apt install build-essential
+
+Fedora:  sudo dnf groupinstall "Development Tools"
+Arch:    sudo pacman -S base-devel
+EOF
+  exit 1
+}
+
+maybe_install_ubuntu_deps() {
+  if [[ "$INSTALL_DEPS" -ne 1 ]]; then
+    return 0
+  fi
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    if [[ "${ID:-}" == "ubuntu" ]]; then
+      info "Installing Ubuntu ${VERSION_ID:-?} packages"
+      "$ROOT/scripts/install-ubuntu-deps.sh"
+      return 0
+    fi
+  fi
+  warn "--deps is for Ubuntu; skipping apt step on this distro"
+}
+
+print_ubuntu_note() {
+  if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    if [[ "${ID:-}" == "ubuntu" && "${VERSION_ID:-}" =~ ^(24.04|26.04)$ ]]; then
+      info "Ubuntu ${VERSION_ID} — supported target"
+    fi
+  fi
+}
+
+ensure_ss() {
+  command -v ss >/dev/null 2>&1 || die "ss not found. Install iproute2."
+}
+
+ensure_path() {
+  if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    warn "$BIN_DIR is not on PATH."
+    echo "Add to ~/.bashrc or ~/.profile:"
+    echo "  export PATH=\"$BIN_DIR:\$PATH\""
+    echo
+  fi
+}
+
+check_menu_launcher() {
+  if pkg-config --exists gtk4 2>/dev/null; then
+    return 0
+  fi
+  warn "GTK 4 dev libs not found — needed to build the graphical menu."
+  echo "  sudo apt install libgtk-4-dev libadwaita-1-dev"
+}
+
+install_binary() {
+  info "Installing port-killer to $BIN_DIR"
+  mkdir -p "$BIN_DIR"
+  cargo install --path "$ROOT" --force --root "$INSTALL_ROOT" --locked
+}
+
+remove_stale_bins() {
+  local stale
+  for stale in "$HOME/.cargo/bin/port-killer" "/usr/local/bin/port-killer"; do
+    if [[ -x "$stale" && "$stale" != "$BIN_DIR/port-killer" ]]; then
+      warn "Removing stale port-killer: $stale"
+      rm -f "$stale"
+    fi
+  done
+}
+
+verify_install() {
+  hash -r 2>/dev/null || true
+  export PATH="$BIN_DIR:$PATH"
+
+  if ! "$BIN_DIR/port-killer" --version >/dev/null 2>&1; then
+    die "install verification failed — binary not runnable at $BIN_DIR/port-killer"
+  fi
+
+  local resolved
+  resolved="$(command -v port-killer || true)"
+  if [[ "$resolved" != "$BIN_DIR/port-killer" ]]; then
+    warn "Another port-killer may still win on PATH: ${resolved:-<none>}"
+    echo "Put $BIN_DIR first in PATH, then run: hash -r"
+    echo "  export PATH=\"$BIN_DIR:\$PATH\""
+  else
+    info "Active binary: $resolved"
+  fi
+}
+
+main() {
+  print_ubuntu_note
+  maybe_install_ubuntu_deps
+  ensure_rust
+  ensure_linker
+  ensure_ss
+  install_binary
+  remove_stale_bins
+  ensure_path
+  check_menu_launcher
+  verify_install
+
+  info "Testing install"
+  "$BIN_DIR/port-killer" status
+
+  if [[ "$SETUP_DESKTOP" -eq 1 ]]; then
+    info "Configuring desktop (auto-detect)"
+    "$BIN_DIR/port-killer" setup desktop --install
+  elif [[ "$SETUP_GNOME" -eq 1 ]]; then
+    info "Configuring GNOME top bar"
+    "$BIN_DIR/port-killer" setup gnome --install
+  elif [[ "$SETUP_WAYBAR" -eq 1 ]]; then
+    info "Configuring Waybar"
+    "$BIN_DIR/port-killer" setup waybar --install
+  else
+    echo
+    echo "Ubuntu GNOME (default): port-killer setup gnome --install"
+    echo "Or: ./install --gnome"
+    echo "Waybar (Hyprland/Sway):  port-killer setup waybar --install"
+    echo "Auto-detect:             port-killer setup desktop --install"
+  fi
+
+  info "Done. Run: port-killer doctor"
+  info "       or: port-killer          # interactive"
+}
+
+main

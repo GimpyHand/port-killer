@@ -1,0 +1,12 @@
+// Merge into ~/.config/waybar/config.jsonc
+// Icon: ~/.config/waybar/icons/port-killer-server.svg (installed by setup waybar --install)
+"custom/port-killer": {
+  "format": "{text}",
+  "return-type": "json",
+  "interval": 5,
+  "exec": "/home/USER/.local/bin/port-killer list",
+  "exec-if": "test -x /home/USER/.local/bin/port-killer",
+  "on-click": "sleep 0.1 && /home/USER/.local/bin/port-killer menu",
+  "signal": 9,
+  "tooltip": true
+}

@@ -1,0 +1,22 @@
+[package]
+name = "port-killer"
+version = "0.3.0"
+edition = "2021"
+description = "Waybar module to list and kill dev server processes by port"
+license = "MIT"
+
+[[bin]]
+name = "port-killer"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+comfy-table = "7"
+dialoguer = "0.12"
+regex = "1"
+gtk4 = { version = "0.9", optional = true }
+libadwaita = { version = "0.7", optional = true, features = ["v1_5"] }
+
+[features]
+default = ["gui"]
+gui = ["gtk4", "libadwaita"]
