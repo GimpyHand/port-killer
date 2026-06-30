@@ -3,6 +3,6 @@
   "name": "Port Killer",
   "description": "Dev server count in the GNOME top bar. Click for a kill dropdown menu.",
   "shell-version": ["45", "46", "47", "48"],
-  "version": 4,
+  "version": 7,
   "port-killer-binary": "PORT_KILLER_BINARY"
 }

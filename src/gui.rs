@@ -4,10 +4,14 @@ use std::rc::Rc;
 
 use gtk4::gdk::Key;
 use gtk4::glib;
+use gtk4::pango::EllipsizeMode;
 use gtk4::prelude::*;
-use gtk4::{Align, Box as GtkBox, Button, Label, ListBox, Orientation, ScrolledWindow};
+use gtk4::{
+    Align, Box as GtkBox, Button, CssProvider, Label, ListBox, ListBoxRow, Orientation,
+    ScrolledWindow, STYLE_PROVIDER_PRIORITY_APPLICATION,
+};
 use libadwaita::prelude::*;
-use libadwaita::{ActionRow, HeaderBar, MessageDialog, ResponseAppearance, ToolbarView, Window};
+use libadwaita::{HeaderBar, MessageDialog, ResponseAppearance, ToolbarView, Window};
 
 use crate::group::{build_kill_targets, KillTarget};
 use crate::kill::{kill_pids, refresh_waybar};
@@ -40,6 +44,7 @@ fn run_gui(mode: &str) -> Result<(), String> {
 
     gtk4::init().map_err(|e| format!("failed to start GTK: {e}"))?;
     libadwaita::init().map_err(|e| format!("failed to start libadwaita: {e}"))?;
+    install_label_measure_fix();
 
     let listeners = collect_listeners()?;
     if listeners.is_empty() {
@@ -90,21 +95,18 @@ fn open_dropdown(
     let list = ListBox::new();
     list.set_selection_mode(gtk4::SelectionMode::None);
     list.add_css_class("boxed-list");
+    list.add_css_class("port-killer-list");
 
     for target in targets {
-        let action_row = ActionRow::builder()
-            .title(&target.panel_label())
-            .subtitle(&target.panel_detail())
-            .subtitle_lines(2)
-            .activatable(true)
-            .build();
+        let row = build_target_row(target, true);
+        row.set_activatable(true);
 
         let target_kill = target.clone();
         let error_kill = error.clone();
         let main_loop_kill = main_loop.clone();
         let window_ref = window.clone();
 
-        action_row.connect_activated(move |_| {
+        row.connect_activate(move |_| {
             let dialog = MessageDialog::builder()
                 .heading("Kill server?")
                 .body(format!("Stop {}?", target_kill.panel_label()))
@@ -135,7 +137,7 @@ fn open_dropdown(
             dialog.present();
         });
 
-        list.append(&action_row);
+        list.append(&row);
     }
 
     let scroll = ScrolledWindow::builder()
@@ -183,20 +185,22 @@ fn open_window(
     let list = ListBox::new();
     list.set_selection_mode(gtk4::SelectionMode::None);
     list.add_css_class("boxed-list");
+    list.add_css_class("port-killer-list");
 
     let rows: Rc<RefCell<Vec<(gtk4::CheckButton, KillTarget)>>> =
         Rc::new(RefCell::new(Vec::new()));
 
     for target in targets {
         let check = gtk4::CheckButton::new();
-        let action_row = ActionRow::builder()
-            .title(&target.panel_label())
-            .subtitle(&target.panel_detail())
-            .subtitle_lines(2)
-            .activatable(false)
-            .build();
-        action_row.add_prefix(&check);
-        list.append(&action_row);
+        let row = build_target_row(target, true);
+        row.set_activatable(false);
+        row.set_selectable(false);
+
+        if let Some(container) = row.child().and_downcast::<GtkBox>() {
+            container.prepend(&check);
+        }
+
+        list.append(&row);
         rows.borrow_mut().push((check, target.clone()));
     }
 
@@ -283,6 +287,67 @@ fn open_window(
     window.set_content(Some(&toolbar));
     window.present();
     Ok(())
+}
+
+fn build_target_row(target: &KillTarget, boxed: bool) -> ListBoxRow {
+    let row = ListBoxRow::new();
+    if boxed {
+        row.add_css_class("port-killer-row");
+    }
+
+    let outer = GtkBox::new(Orientation::Horizontal, 12);
+    outer.set_margin_top(10);
+    outer.set_margin_bottom(10);
+    outer.set_margin_start(12);
+    outer.set_margin_end(12);
+
+    let labels = GtkBox::new(Orientation::Vertical, 2);
+    labels.set_hexpand(true);
+    labels.append(&make_row_label(&target.panel_label(), true));
+
+    let detail = target.panel_detail();
+    if !detail.trim().is_empty() {
+        labels.append(&make_row_label(&detail, false));
+    }
+
+    outer.append(&labels);
+    row.set_child(Some(&outer));
+    row
+}
+
+fn make_row_label(text: &str, heading: bool) -> Label {
+    let label = Label::builder()
+        .label(text)
+        .halign(Align::Start)
+        .xalign(0.0)
+        .hexpand(true)
+        .wrap(false)
+        .ellipsize(EllipsizeMode::End)
+        .build();
+
+    if heading {
+        label.add_css_class("heading");
+    } else {
+        label.add_css_class("dim-label");
+    }
+
+    label
+}
+
+fn install_label_measure_fix() {
+    let provider = CssProvider::new();
+    provider.load_from_data(
+        "list.port-killer-list label { min-width: 0; }
+         .port-killer-row label { min-width: 0; }",
+    );
+
+    if let Some(display) = gtk4::gdk::Display::default() {
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
 }
 
 fn bind_escape_quit(window: &Window, main_loop: Rc<glib::MainLoop>) {

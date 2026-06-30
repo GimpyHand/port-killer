@@ -53,7 +53,7 @@ pub fn kill_pids(pids: &std::collections::HashSet<u32>, force: bool) -> Result<u
 
 fn send_signal(pid: u32, signal: i32) -> Result<(), KillError> {
     let status = Command::new("kill")
-        .args(["-", &signal.to_string(), &pid.to_string()])
+        .args([format!("-{signal}"), pid.to_string()])
         .status()
         .map_err(|e| KillError::SignalFailed {
             pid,
@@ -77,6 +77,6 @@ fn process_running(pid: u32) -> bool {
 pub fn refresh_waybar(signal: u8) {
     let sig = format!("SIGRTMIN+{signal}");
     let _ = Command::new("pkill")
-        .args(["-", &sig, "waybar"])
+        .args([format!("-{sig}"), "waybar".to_string()])
         .status();
 }
